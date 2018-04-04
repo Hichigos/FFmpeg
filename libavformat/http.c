@@ -64,6 +64,8 @@ typedef struct HTTPContext {
     unsigned char buffer[BUFFER_SIZE], *buf_ptr, *buf_end;
     int line_count;
     int http_code;
+    /* WebSocket impl field */
+    uint64_t websocket_payload_left;
     /* Used if "Transfer-Encoding: chunked" otherwise -1. */
     uint64_t chunksize;
     uint64_t off, end_off, filesize;
@@ -1337,6 +1339,113 @@ static int http_buf_read(URLContext *h, uint8_t *buf, int size)
     return len;
 }
 
+static int ws_buf_read(URLContext *h, uint8_t *buf, int size)
+{
+    HTTPContext *s = h->priv_data;
+    int len;
+
+    if (s->chunksize != UINT64_MAX) {
+        if (s->chunkend) {
+            return AVERROR_EOF;
+        }
+        if (!s->chunksize) {
+            char line[32];
+            int err;
+
+            do {
+                if ((err = http_get_line(s, line, sizeof(line))) < 0)
+                    return err;
+            } while (!*line);    /* skip CR LF from last chunk */
+
+            s->chunksize = strtoull(line, NULL, 16);
+
+            av_log(h, AV_LOG_TRACE,
+                   "Chunked encoding data size: %"PRIu64"\n",
+                    s->chunksize);
+
+            if (!s->chunksize && s->multiple_requests) {
+                http_get_line(s, line, sizeof(line)); // read empty chunk
+                s->chunkend = 1;
+                return 0;
+            }
+            else if (!s->chunksize) {
+                av_log(h, AV_LOG_DEBUG, "Last chunk received, closing conn\n");
+                ffurl_closep(&s->hd);
+                return 0;
+            }
+            else if (s->chunksize == UINT64_MAX) {
+                av_log(h, AV_LOG_ERROR, "Invalid chunk size %"PRIu64"\n",
+                       s->chunksize);
+                return AVERROR(EINVAL);
+            }
+        }
+        size = FFMIN(size, s->chunksize);
+    }
+
+    /* read bytes from input buffer first */
+    len = s->buf_end - s->buf_ptr;
+    if (len > 0) {
+        if (len > size)
+            len = size;
+        memcpy(buf, s->buf_ptr, len);
+        s->buf_ptr += len;
+    } else {
+        uint64_t target_end = s->end_off ? s->end_off : s->filesize;
+        if ((!s->willclose || s->chunksize == UINT64_MAX) && s->off >= target_end)
+            return AVERROR_EOF;
+        len = ffurl_read(s->hd, buf, size);
+        if (!len && (!s->willclose || s->chunksize == UINT64_MAX) && s->off < target_end) {
+            av_log(h, AV_LOG_ERROR,
+                   "Stream ends prematurely at %"PRIu64", should be %"PRIu64"\n",
+                   s->off, target_end
+                  );
+            return AVERROR(EIO);
+        }
+    }
+    if (len > 0) {
+        s->off += len;
+        if (s->chunksize > 0 && s->chunksize != UINT64_MAX) {
+            av_assert0(s->chunksize >= len);
+            s->chunksize -= len;
+        }
+    }
+
+    if (len <= s->websocket_payload_left) {
+     s->websocket_payload_left -= len;
+     return len;
+    }
+
+    for (int pos=s->websocket_payload_left; pos < len; pos++) {
+     // TODO: Don't read outside buffer
+     if (buf[pos] == 0x82 && (buf[pos+1]==126 || buf[pos+1]==127)) {
+       unsigned short ws_header_length = 2;
+       unsigned short payload_val_length = 2;
+       uint64_t payload_length = 0;
+       if (buf[pos+1] == 127) { // extended payload length 64 bit
+         payload_val_length = 8;
+       }
+       for (int i=0;i<payload_val_length;i++) {
+         payload_length = (payload_length<<8) + buf[pos+ws_header_length+i];
+       }
+       int trim_bytes = ws_header_length+payload_val_length;
+       int move_bytes = len - pos - trim_bytes;
+       if (move_bytes < 0) {
+         move_bytes = 0;
+       }
+       if (move_bytes < payload_length) {
+         s->websocket_payload_left = payload_length - move_bytes;
+       } else {
+         s->websocket_payload_left = 0;
+       }
+       memmove(buf+pos, buf+pos+trim_bytes, move_bytes);
+       len -= trim_bytes;
+       pos+= payload_length > move_bytes ? move_bytes : payload_length;
+       pos--;
+     }
+    }
+    return len;
+}
+
 #if CONFIG_ZLIB
 #define DECOMPRESS_BUF_SIZE (256 * 1024)
 static int http_buf_read_compressed(URLContext *h, uint8_t *buf, int size)
@@ -1668,6 +1777,25 @@ const URLProtocol ff_http_protocol = {
     .priv_data_class     = &http_context_class,
     .flags               = URL_PROTOCOL_FLAG_NETWORK,
     .default_whitelist   = "http,https,tls,rtp,tcp,udp,crypto,httpproxy"
+};
+
+HTTP_CLASS(ws);
+const URLProtocol ff_ws_protocol = {
+    .name                = "ws",
+    .url_open2           = http_open,
+    .url_accept          = http_accept,
+    .url_handshake       = http_handshake,
+    .url_read            = ws_buf_read,
+    .url_write           = http_write,
+    .url_seek            = http_seek,
+    .url_close           = http_close,
+    .url_get_file_handle = http_get_file_handle,
+    .url_get_short_seek  = http_get_short_seek,
+    .url_shutdown        = http_shutdown,
+    .priv_data_size      = sizeof(HTTPContext),
+    .priv_data_class     = &ws_context_class,
+    .flags               = URL_PROTOCOL_FLAG_NETWORK,
+    .default_whitelist   = "ws,tcp,udp"
 };
 #endif /* CONFIG_HTTP_PROTOCOL */
 
