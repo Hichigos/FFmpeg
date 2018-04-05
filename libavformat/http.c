@@ -1414,7 +1414,7 @@ static int ws_buf_read(URLContext *h, uint8_t *buf, int size)
     int len;
 
     if (s->chunksize != UINT64_MAX) {
-        if (s->chunkend) {
+        if (s->buf_end) {
             return AVERROR_EOF;
         }
         if (!s->chunksize) {
@@ -1434,7 +1434,7 @@ static int ws_buf_read(URLContext *h, uint8_t *buf, int size)
 
             if (!s->chunksize && s->multiple_requests) {
                 http_get_line(s, line, sizeof(line)); // read empty chunk
-                s->chunkend = 1;
+                s->buf_end = 1;
                 return 0;
             }
             else if (!s->chunksize) {
