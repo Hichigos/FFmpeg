@@ -267,7 +267,7 @@ OBJS-$(CONFIG_OSCILLOSCOPE_FILTER)           += vf_datascope.o
 OBJS-$(CONFIG_OVERLAY_FILTER)                += vf_overlay.o framesync.o
 OBJS-$(CONFIG_OVERLAY_OPENCL_FILTER)         += vf_overlay_opencl.o opencl.o \
                                                 opencl/overlay.o framesync.o
-OBJS-$(CONFIG_OVERLAY_QSV_FILTER)            += vf_overlay_qsv.o
+OBJS-$(CONFIG_OVERLAY_QSV_FILTER)            += vf_overlay_qsv.o framesync.o
 OBJS-$(CONFIG_OWDENOISE_FILTER)              += vf_owdenoise.o
 OBJS-$(CONFIG_PAD_FILTER)                    += vf_pad.o
 OBJS-$(CONFIG_PALETTEGEN_FILTER)             += vf_palettegen.o
@@ -353,6 +353,7 @@ OBJS-$(CONFIG_USPP_FILTER)                   += vf_uspp.o
 OBJS-$(CONFIG_VAGUEDENOISER_FILTER)          += vf_vaguedenoiser.o
 OBJS-$(CONFIG_VECTORSCOPE_FILTER)            += vf_vectorscope.o
 OBJS-$(CONFIG_VFLIP_FILTER)                  += vf_vflip.o
+OBJS-$(CONFIG_VFRDET_FILTER)                 += vf_vfrdet.o
 OBJS-$(CONFIG_VIDSTABDETECT_FILTER)          += vidstabutils.o vf_vidstabdetect.o
 OBJS-$(CONFIG_VIDSTABTRANSFORM_FILTER)       += vidstabutils.o vf_vidstabtransform.o
 OBJS-$(CONFIG_VIGNETTE_FILTER)               += vf_vignette.o
